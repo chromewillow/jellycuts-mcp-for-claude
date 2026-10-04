@@ -1,0 +1,24 @@
+{
+  "name": "jellycuts-mcp-for-claude",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A remote MCP connector that lets Claude write, check and hand off Jellycuts (Jelly language) scripts for iPhone Shortcuts.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build:catalog": "node scripts/build-catalog.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261004.1",
+    "typescript": "~5.9.3",
+    "vitest": "^5.0.3",
+    "wrangler": "^4.147.0"
+  }
+}
