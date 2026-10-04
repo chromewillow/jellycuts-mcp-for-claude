@@ -1,0 +1,6 @@
+import Shortcuts
+#Color: green, #Icon: battery
+
+// Read the battery level and show it
+batteryLevel() >> level
+showResult(text: "Your battery is at ${level}%")
