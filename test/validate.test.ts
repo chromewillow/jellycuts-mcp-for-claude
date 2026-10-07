@@ -123,7 +123,7 @@ describe("catches common mistakes", () => {
     ["unknown action with suggestion", `import Shortcuts\nshowNotification(body: "hi")`, /Unknown action `showNotification`[\s\S]*sendNotification/],
     ["unlabelled arguments", `import Shortcuts\ntext(text: "x") >> t\nquicklook(t)`, /must be labelled[\s\S]*quicklook\(input:/],
     ["wrong label", `import Shortcuts\nalert(message: "hi")`, /no parameter `message`/],
-    ["wrong enum casing", `import Shortcuts\nchangeCase(text: "hi", case: UPPERCASE)`, /`UPPERCASE` isn't a valid value[\s\S]*uppercase/],
+    ["spaced words in an untyped parameter", `import Actions\naddToList(list: foo bar, item: "x")`, /names can't contain spaces/],
     ["quoted enum", `import Shortcuts\naskForInput(prompt: "Age?", type: "Number")`, /bare value/],
     ["misspelt multi-word enum", `import Shortcuts\ndeviceDetails(detail: Device Nmae) >> n`, /isn't a valid value[\s\S]*Device Name/],
     ["missing library import", `import Shortcuts\ngetValue(keyPath: "x")`, /DataJar library, which isn't imported/],
@@ -173,6 +173,7 @@ describe("catches common mistakes", () => {
     ["enum written as the compiler's identifier", `import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: ItemAtIndex, index: "1")`, /open-source compiler's name[\s\S]*type: Item At Index/],
     ["variables inside JSON", `import Shortcuts\nvar n = "x"\ndictionary(json: {"name": "\${n}"})`, /can't contain variables[\s\S]*setValue/],
     ["a { } value before other arguments", `import Shortcuts\ndownloadURL(url: "https://example.com", headers: {\\"a\\": \\"b\\"}, method: GET) >> r`, /Put `headers:` after the other arguments/],
+    ["enum letter case", `import Shortcuts\nchangeCase(text: "hi", case: UPPERCASE)`, /only in letter case[\s\S]*case: uppercase/],
     ["requestJSON, whose form isn't confirmed", `import Shortcuts\ndownloadURL(url: "https://example.com", method: POST, requestType: Json, requestJSON: {"a": "b"}) >> r`, /isn't confirmed yet[\s\S]*requestType: File/],
     ["a quoted text variable as JSON", `import Shortcuts\nvar j = "x"\ndictionary(json: "\${j}") >> d`, /isn't confirmed to work/],
   ];
@@ -207,6 +208,21 @@ describe("catches common mistakes", () => {
     ]) {
       expect(messages(errors(code)), code).toBe("");
     }
+  });
+
+  it("accepts the docs' bare filter values", () => {
+    const code = `import Shortcuts\nfilterNotes(input: All Notes, filterType: All, sortBy: Creation Date, order: Oldest First, limit: 20) >> notes`;
+    expect(messages(errors(code))).toBe("");
+  });
+
+  it("never hangs on a stray closer inside an unclosed menu", () => {
+    for (const junk of ['import Shortcuts\nmenu "P" {\n]', 'import Shortcuts\nmenu "P" {\n)', 'import Shortcuts\nmenu "P" {\n}}]']) {
+      expect(validateJelly(junk).ok).toBe(false);
+    }
+  });
+
+  it("reads escaped backslashes inside escaped JSON without losing the rest of the line", () => {
+    expect(messages(errors('import Shortcuts\ndownloadURL(url: "https://e.com", headers: {\\"a\\": \\"b\\\\\\"c\\"}) >> r'))).not.toMatch(/never closed/);
   });
 
   it("reports line and column numbers", () => {

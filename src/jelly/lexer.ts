@@ -205,6 +205,11 @@ export function lex(source: string): { tokens: Token[]; problems: LexProblem[]; 
         j++;
         continue;
       }
+      if (escaped && ch === "\\" && src[j + 1] === "\\") {
+        // An escaped backslash inside escaped-quote JSON, e.g. {\"a\": \"b\\\"c\"}.
+        j += src[j + 2] === "\\" && src[j + 3] === '"' ? 4 : 2;
+        continue;
+      }
       if (ch === "\\" && src[j + 1] === '"') {
         escaped = !escaped;
         j += 2;

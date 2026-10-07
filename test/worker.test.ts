@@ -133,6 +133,11 @@ describe("MCP protocol", () => {
     expect(text).toContain("The variable FileExtension does not exist in the scope");
   });
 
+  it("get_action points language statements at the guide", async () => {
+    const { text } = await callTool("get_action", { names: ["menu"] });
+    expect(text).toContain("part of the Jelly language");
+  });
+
   it("share_jelly accepts the ElevenLabs Reader without allow_errors", async () => {
     const { text, isError } = await callTool("share_jelly", { name: "ElevenLabs Reader", code: readerScript });
     expect(isError).toBe(false);

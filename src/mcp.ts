@@ -29,6 +29,8 @@ Workflow for any "make me a shortcut" request:
 If the user reports an error from the Jellycuts app, ask for the whole console text, fix the script, re-validate and share a new link.
 Keep explanations short — the user is probably on their phone.`;
 
+const LANGUAGE_STATEMENTS = new Set(["menu", "case", "if", "else", "repeat", "repeatEach", "func", "macro", "var", "return", "import"]);
+
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });
 const failure = (s: string) => ({ content: [{ type: "text" as const, text: s }], isError: true });
 
@@ -117,6 +119,10 @@ export function createMcpServer(options: { origin: string }): McpServer {
       const parts: string[] = [];
       for (const raw of names) {
         const name = raw.trim().replace(/\(.*$/, "");
+        if (LANGUAGE_STATEMENTS.has(name)) {
+          parts.push(`### ${name}\n\`${name}\` is part of the Jelly language, not an action. See jelly_guide (control_flow, variables or functions) for its syntax.`);
+          continue;
+        }
         let matches = findActions(name);
         if (!matches.length) matches = findActionsIgnoringCase(name);
         if (library) {

@@ -22,6 +22,13 @@ describe("catalog data", () => {
     expect(catalog.enumAliases[type.enum!].DateandTime).toEqual({ to: "Date and Time", status: "internal" });
   });
 
+  it("has no padded enum values and every alias points at a listed value", () => {
+    for (const [name, values] of Object.entries(catalog.enums)) {
+      for (const v of values) expect(v, name).toBe(v.trim());
+      for (const alias of Object.values(catalog.enumAliases[name] ?? {})) expect(values, name).toContain(alias.to);
+    }
+  });
+
   it("marks optional parameters for Shortcuts actions", () => {
     const notify = findActions("sendNotification")[0];
     expect(notify.params.find((p) => p.name === "body")?.optional).toBeFalsy();

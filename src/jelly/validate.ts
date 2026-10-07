@@ -76,8 +76,10 @@ const FOREIGN_KEYWORDS: Record<string, string> = {
   struct: "Jelly has no structs.",
 };
 const PREMIUM_LIBRARIES = new Set(["RoutineHubAds"]);
-/** Parameter types the docs don't describe precisely; their values aren't second-guessed. */
-const LOOSE_TYPES = new Set(["Unknown", "Literal", "Object", "Filter", "Filter Type", "Order", "Sort"]);
+/** Filter/sort parameter shapes the docs write as bare multi-word values (`sortBy: Creation Date`). */
+const FILTER_TYPES = new Set(["Filter", "Filter Type", "Order", "Sort"]);
+/** Untyped parameters of the filter actions take the same bare values (`input: All Notes`). */
+const FILTER_ACTION = /^(filter|find)[A-Z]/;
 // The open-source compiler spells a few library names differently from the docs.
 const LIBRARY_ALIASES: Record<string, string> = { ToolboxPro: "Toolbox", AShell: "aShell", AShellMini: "aShellMini" };
 
@@ -819,7 +821,9 @@ class Validator {
         continue;
       }
       this.error(this.peek(), "Inside a menu, code must come after a `case \"Label\":` line.");
+      const before = this.pos;
       this.skipLine();
+      if (this.pos === before) this.next(); // a stray `)` or `]` stops skipLine without moving
     }
     if (cases === 0) this.error(kw, 'This menu has no cases. Add `case "Option":` lines inside it.');
     this.outputCapture();
@@ -967,7 +971,7 @@ class Validator {
         } else if (!["if", "else", "case"].includes(nextWord.value)) {
           const words = [t.value];
           while (this.at("ident") && this.peek().line === t.line) words.push(this.next().value);
-          this.error(t, `\`${words.join(" ")}\` — names can't contain spaces.`, "If it's text, put it in quotes. Setting (enum) values may contain spaces only as an action argument, spelled exactly as get_action lists them.");
+          this.error(t, `\`${words.join(" ")}\` — names can't contain spaces.`, "If it's text, put it in quotes. If the parameter needs a variable, create it first (`… >> name`) and pass the name. Setting (enum) values may contain spaces, spelled exactly as get_action lists them.");
           expr.name = words.join("");
         }
       }
@@ -1074,9 +1078,8 @@ class Validator {
         isEnum = true;
         for (const v of enumSpellings(p)) spellings.add(v);
       }
-      // Loosely documented shapes (filter sort keys, untyped parameters): the docs write bare
-      // multi-word values such as `sortBy: Creation Date`, so don't reject them.
-      if (p && LOOSE_TYPES.has(p.type)) isEnum = true;
+      // Filter actions: the docs write bare multi-word values such as `sortBy: Creation Date`.
+      if (p && (FILTER_TYPES.has(p.type) || (FILTER_ACTION.test(fn) && (p.type === "Unknown" || p.type === "Literal")))) isEnum = true;
     }
     if (!isEnum) return undefined;
     let k = 0;
@@ -1371,8 +1374,8 @@ class Validator {
           // name. Confirmed for FileExtension; inferred for the other values.
           this.warn(
             value.tok,
-            `\`${spelling}\` is the open-source compiler's name for this value; the Jellycuts app reads the real Shortcuts spelling (\`property: FileExtension\` fails with "The variable FileExtension does not exist in the scope").`,
-            `Write \`${param.name}: ${alias.to}\` (spaces included, no quotes).`,
+            `\`${spelling}\` is the open-source compiler's name for this value, not the Shortcuts spelling. The app reads Shortcuts spellings: the squashed form failed for \`FileExtension\` ("The variable FileExtension does not exist in the scope") and is expected to fail here too.`,
+            `Write \`${param.name}: ${alias.to}\` as get_action lists it (spaces included, no quotes).`,
           );
           return;
         }
@@ -1382,6 +1385,12 @@ class Validator {
         }
         if (param.type === "DynamicEnum" && value.k === "words") return; // free text is allowed for dynamic enums
         const loose = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const sameWords = (v: string) => v.toLowerCase().replace(/\s+/g, " ") === spelling.toLowerCase().replace(/\s+/g, " ");
+        const caseOnly = values.find(sameWords);
+        if (caseOnly) {
+          this.warn(value.tok, `\`${spelling}\` differs from the listed spelling only in letter case or spacing; whether the app cares isn't confirmed.`, `Write \`${param.name}: ${caseOnly}\` as get_action lists it.`);
+          return;
+        }
         const near = values.find((v) => loose(v) === loose(spelling));
         const sugg = near ? [near] : closest(spelling, values);
         if (param.type === "DynamicEnum" && !near) return;
@@ -1469,7 +1478,7 @@ class Validator {
       action.name === "downloadURL" ? "For a JSON body, build it with `dictionary(json: …)` + `setValue` and send it with `requestType: File, requestVar: <it>` (jelly_guide › recipes)." : "";
     const noVariables =
       param.name === "headers"
-        ? "Write the values themselves into the braces; headers can't take a variable, so an API key goes into the script."
+        ? "Write the values themselves into the braces (the docs say this JSON can't hold variables; not yet tested for headers), so an API key goes into the script."
         : action.name === "dictionary"
           ? 'Start from `dictionary(json: {"key": ""}) >> d` and fill it with `setValue(key: "key", value: "${name}", dictionary: d) >> filled`.'
           : viaBody;
@@ -1517,7 +1526,7 @@ class Validator {
     if (hasQuotes ? !form : !parses(raw)) {
       this.error(
         value.tok,
-        `This isn't valid JSON — the Jellycuts app reports "Unable to find valid JSON".`,
+        `This isn't valid JSON (keys and text values need double quotes) — the Jellycuts app rejects JSON it can't read with "Unable to find valid JSON".`,
         `Quote every key and text value, using one kind of quote throughout${want ? `: ${asWanted('{"key": "value"}')}` : ""}.`,
       );
       return;

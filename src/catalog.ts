@@ -428,7 +428,7 @@ export function formatActionDetail(a: Action): string {
         if (rule.confirmed) {
           const form = rule.accepted[0];
           const sample = writeDict(rule.example ?? '{"key": "value"}', form);
-          row += ` — write it as \`${p.name}: ${sample}\` (${form === "plain" ? "plain JSON in braces" : "JSON in braces with every quote escaped as \\\""}, no surrounding quotes, no variables inside); confirmed in the Jellycuts app`;
+          row += ` — write it as \`${p.name}: ${sample}\` (${form === "plain" ? "plain JSON in braces" : "JSON in braces with every quote escaped as \\\""}, no surrounding quotes); this form is confirmed in the Jellycuts app. Per the docs, the JSON can't contain variables`;
         } else {
           row += " — how the Jellycuts app wants this written isn't confirmed yet";
           if (a.name === "downloadURL") row += "; for a JSON body use `requestType: File, requestVar: <dictionary>` instead (jelly_guide › recipes)";
@@ -440,7 +440,7 @@ export function formatActionDetail(a: Action): string {
   } else {
     lines.push("Parameters: none — call it as `" + a.name + "()`");
   }
-  if (a.example) lines.push(a.exampleAdapted ? "Example (adapted from the docs to what the Jellycuts app accepts):" : "Example (from the docs):", "```jelly", a.example, "```");
+  if (a.example) lines.push(a.exampleAdapted ? "Example (adapted from the docs: Shortcuts spellings and the confirmed JSON forms):" : "Example (from the docs):", "```jelly", a.example, "```");
   lines.push(`Docs: ${a.doc}`);
   return lines.join("\n");
 }

@@ -221,8 +221,8 @@ for (const file of walk(lookupDir)) {
     for (const item of c[1].split(",")) {
       const v = /^`?(\w+)`?(?:\s*=\s*"([^"]*)")?$/.exec(item.trim());
       if (!v) continue;
-      const caseName = v[2] ?? v[1];
-      const real = realValue.get(v[1]) ?? caseName;
+      const caseName = (v[2] ?? v[1]).trim();
+      const real = (realValue.get(v[1]) ?? caseName).trim();
       const spelling = real === caseName || isCode(real) ? caseName : real;
       if (values.includes(spelling)) continue;
       values.push(spelling);
