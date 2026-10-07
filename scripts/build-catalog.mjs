@@ -187,22 +187,59 @@ function walk(dir, out = []) {
   return out;
 }
 
-const enums = {};
+// The Swift case names (`FileExtension`) are identifier-safe stand-ins; each enum's `value`
+// switch holds the real Shortcuts value (`File Extension`). The Jellycuts app reads the real
+// value: `property: FileExtension` fails with "The variable FileExtension does not exist in the
+// scope" while `property: File Extension` builds (data/app-confirmed.json), and the docs examples
+// use real values too. Exception: when the real value is an internal code (a UTI, a number, a
+// bundle ID such as com.apple.speech.synthesis.voice.alex), people write the case name
+// (`voice: Alex`, `color: Red`), as the docs examples do.
+const isCode = (v) => /^[a-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(v) || /^\d+$/.test(v) || /[^\x20-\x7E]/.test(v) || /^WF[A-Z]/.test(v);
+
+const appConfirmed = JSON.parse(readFileSync(join(root, "data/app-confirmed.json"), "utf8"));
+const enums = {}; // enum name -> spellings to write, in source order
+const enumAliases = {}; // enum name -> { other spelling: { to, status } }
+const addAlias = (name, spelling, to, status) => {
+  enumAliases[name] ??= {};
+  enumAliases[name][spelling] = { to, status };
+};
 const lookupDir = join(coreDir, "Sources/Open-Jellycore/Core/Compiler/Lookup Tables/Apps");
 for (const file of walk(lookupDir)) {
   const src = readFileSync(file, "utf8");
   const m = /enum\s+Jelly_(\w+)\s*:\s*String[^{]*\{([\s\S]*?)(?:\n\s*(?:init|var|static|func)\b)/.exec(src);
   if (!m) continue;
+  const name = m[1];
+  const realValue = new Map();
+  const valueSwitch = /var value: String \{([\s\S]*?)\n\s{4}\}/.exec(src)?.[1] ?? "";
+  for (const c of valueSwitch.matchAll(/case\s+\.`?(\w+)`?\s*:\s*return\s+"((?:[^"\\]|\\.)*)"/g)) realValue.set(c[1], c[2]);
   const values = [];
   for (const line of m[2].split("\n")) {
     const c = /^\s*case\s+(.+?)\s*$/.exec(line);
     if (!c) continue;
     for (const item of c[1].split(",")) {
       const v = /^`?(\w+)`?(?:\s*=\s*"([^"]*)")?$/.exec(item.trim());
-      if (v) values.push(v[2] ?? v[1]);
+      if (!v) continue;
+      const caseName = v[2] ?? v[1];
+      const real = realValue.get(v[1]) ?? caseName;
+      const spelling = real === caseName || isCode(real) ? caseName : real;
+      if (values.includes(spelling)) continue;
+      values.push(spelling);
+      if (spelling !== caseName) addAlias(name, caseName, spelling, "internal");
     }
   }
-  if (values.length) enums[m[1]] = values;
+  if (values.length) enums[name] = values;
+}
+// App results override the rules above.
+for (const [name, rule] of Object.entries(appConfirmed.enumSpellings ?? {})) {
+  if (!enums[name]) continue;
+  for (const spelling of rule.accepted ?? []) {
+    if (!enums[name].includes(spelling)) {
+      const target = enumAliases[name]?.[spelling]?.to;
+      if (target) addAlias(name, spelling, target, "confirmed");
+      else enums[name].push(spelling);
+    }
+  }
+  for (const [spelling, to] of Object.entries(rule.rejected ?? {})) addAlias(name, spelling, to, "rejected");
 }
 
 // ---- Actions from the docs -------------------------------------------------------------
@@ -232,7 +269,11 @@ for (const a of actions) {
 const usedEnums = new Set();
 for (const a of byKey.values()) for (const p of a.params) if (p.enum) usedEnums.add(p.enum);
 const enumsOut = {};
-for (const name of [...usedEnums].sort()) if (enums[name]) enumsOut[name] = enums[name];
+const aliasesOut = {};
+for (const name of [...usedEnums].sort()) {
+  if (enums[name]) enumsOut[name] = enums[name];
+  if (enumAliases[name]) aliasesOut[name] = enumAliases[name];
+}
 
 // ---- Example clean-up ------------------------------------------------------------------
 // Many generated examples predate Jelly 3 (spaces in names, display names for enum values)
@@ -246,10 +287,11 @@ const V2_GLOBALS = [
 const squash = (s) => s.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
 // Hand-written examples for actions whose docs example is broken.
 const EXAMPLE_OVERRIDES = {
-  "Shortcuts:dictionary": 'dictionary(json: "{\\"name\\": \\"Ada\\", \\"age\\": 36}") >> person',
+  // Dictionary parameters use the forms confirmed in data/app-confirmed.json.
+  "Shortcuts:dictionary": 'dictionary(json: {"name": "Ada", "age": 36}) >> person',
   "Shortcuts:list": 'list(items: ["Coffee", "Tea", "Water"]) >> drinks',
   "Shortcuts:downloadURL":
-    'downloadURL(url: "https://httpbin.org/post", method: POST, headers: "{\\"Accept\\": \\"application/json\\"}", requestType: Json, requestJSON: "{\\"hello\\": \\"world\\"}") >> response',
+    'downloadURL(url: "https://httpbin.org/get", method: GET, headers: {\\"Accept\\": \\"application/json\\"}) >> response',
   "Shortcuts:valueFor": 'valueFor(key: "name", dictionary: person) >> name',
 };
 
@@ -270,6 +312,8 @@ function normalizeExample(action) {
     const [, label, value] = m;
     const param = action.params.find((p) => p.name === label);
     const values = param?.enum && enumsOut[param.enum];
+    const alias = param?.enum && aliasesOut[param.enum]?.[value];
+    if (alias) return `${label}: ${alias.to}`;
     if (values && /^[A-Za-z]/.test(value) && !values.includes(value)) {
       const s = squash(value);
       const hit =
@@ -288,6 +332,25 @@ function normalizeExample(action) {
     return `${label}: ${value}`;
   });
   return ex.replace(call[0], `${action.name}(${parts.join(", ")})`);
+}
+// Spellings the docs examples use that differ from the real value only in letter case or
+// spacing ("Item at Index" vs "Item At Index"). Kept as aliases; the app hasn't confirmed them.
+for (const a of byKey.values()) {
+  const call = new RegExp(`\\b${a.name}\\(([\\s\\S]*)\\)`).exec(a.example ?? "");
+  if (!call) continue;
+  for (const part of splitTopLevel(call[1])) {
+    const m = /^([A-Za-z_]\w*)\s*:\s*([A-Za-z][\w .-]*)$/.exec(part);
+    if (!m) continue;
+    const param = a.params.find((p) => p.name === m[1]);
+    const values = param?.enum && enumsOut[param.enum];
+    const value = m[2].trim();
+    if (!values || values.includes(value) || aliasesOut[param.enum]?.[value]) continue;
+    const hit = values.find((v) => squash(v) === squash(value));
+    if (hit) {
+      addAlias(param.enum, value, hit, "docs");
+      aliasesOut[param.enum] = enumAliases[param.enum];
+    }
+  }
 }
 for (const a of byKey.values()) a.example = normalizeExample(a);
 
@@ -320,10 +383,11 @@ const libraries = Object.values(LIBRARIES)
 
 const catalog = {
   generated: new Date().toISOString().slice(0, 10),
-  source: `docs.jellycuts.com @ ${docsCommit}; enum values from OpenJelly/Open-Jellycore`,
+  source: `docs.jellycuts.com @ ${docsCommit}; enum values from OpenJelly/Open-Jellycore (real Shortcuts values); app results from data/app-confirmed.json`,
   libraries,
   metadata,
   enums: enumsOut,
+  enumAliases: aliasesOut,
   actions: [...byKey.values()],
 };
 
@@ -335,6 +399,7 @@ const lines = [
   `"libraries": [\n${catalog.libraries.map((l) => JSON.stringify(l)).join(",\n")}\n],`,
   `"metadata": {\n"colors": ${JSON.stringify(metadata.colors)},\n"icons": ${JSON.stringify(metadata.icons)}\n},`,
   `"enums": {\n${Object.entries(catalog.enums).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(",\n")}\n},`,
+  `"enumAliases": {\n${Object.entries(catalog.enumAliases).map(([k, v]) => `${JSON.stringify(k)}: ${JSON.stringify(v)}`).join(",\n")}\n},`,
   `"actions": [\n${catalog.actions.map((a) => JSON.stringify(a)).join(",\n")}\n]`,
   "}",
 ];

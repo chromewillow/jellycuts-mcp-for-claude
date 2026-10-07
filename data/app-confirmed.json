@@ -1,0 +1,24 @@
+{
+  "about": "Facts confirmed by building scripts in the Jellycuts iOS app and reading its console. Hand-maintained: only add an entry backed by a console result, and add the script to test/fixtures/app-console/. This file wins over the docs and the open-source compiler. scripts/build-catalog.mjs merges enumSpellings into data/catalog.json; src/jelly/validate.ts reads dictionaryParams.",
+  "dictionaryParams": {
+    "Shortcuts:dictionary:json": {
+      "accepted": ["plain"],
+      "rejected": ["quoted"],
+      "example": "{\"name\": \"Ada\", \"age\": 36}",
+      "evidence": "2026-10-07: dictionary(json: {\"model_id\": \"abc\"}), {\"xi-api-key\": \"abc\"} and {\"a\": \"b\", \"c\": \"d\"} built; dictionary(json: \"{\\\"model_id\\\": …}\") failed with 'Unable to find valid JSON' (json-probe.jelly, reader-quoted-json.jelly)."
+    },
+    "Shortcuts:downloadURL:headers": {
+      "accepted": ["escaped"],
+      "rejected": ["plain", "quoted"],
+      "example": "{\\\"Accept\\\": \\\"application/json\\\"}",
+      "evidence": "2026-10-07: headers: {\\\"xi-api-key\\\": \\\"abc\\\"} built; headers: {\"Accept\": \"abc\"} (first or last argument, one or two keys) and headers: \"{\\\"…\\\"}\" failed with 'Unable to find valid JSON' (json-probe.jelly lines 6-10, reader fixtures)."
+    }
+  },
+  "enumSpellings": {
+    "WFContentItemPropertyName": {
+      "accepted": ["File Extension", "Body"],
+      "rejected": { "FileExtension": "File Extension" },
+      "evidence": "2026-10-07: fileDetail(property: FileExtension) failed with 'The variable FileExtension does not exist in the scope'; property: File Extension and articleDetail(detail: Body) built (reader fixtures)."
+    }
+  }
+}

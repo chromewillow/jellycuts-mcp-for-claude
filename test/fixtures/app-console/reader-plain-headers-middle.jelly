@@ -1,0 +1,66 @@
+import Shortcuts
+#Color: purple, #Icon: speakerwave3
+
+// ElevenLabs Reader
+// Select text in any app → Share → ElevenLabs Reader.
+// Run it with nothing shared and it reads your clipboard. Share a link and it reads the article.
+//
+// ONE-TIME SETUP
+// 1. Find the 🔑 line below and replace PASTE_YOUR_ELEVENLABS_API_KEY_HERE with your key (keep the quotes).
+// 2. In Shortcuts, open this shortcut → ⓘ → turn on Show in Share Sheet.
+
+// ⚙️ Voice. George JBFqnCBsd6RMkjVDRZzb · Sarah EXAVITQu4vr4xnSDxMaL · Daniel onwK4e9ZLuTAKqWW03F9 · Charlotte XB0fDUnXU5powFXDhCwa (or any Voice ID from your ElevenLabs library)
+var voiceID = "JBFqnCBsd6RMkjVDRZzb"
+
+// ⚙️ Model. eleven_flash_v2_5 = fastest, lowest cost · eleven_v4 = highest quality, slower · eleven_multilingual_v2 = steadiest on very long reads
+dictionary(json: {"model_id": "eleven_flash_v2_5"}) >> request
+
+// ⚙️ Playback. "play" starts speaking right away. "player" opens a player with pause and scrubbing.
+var playMode = "play"
+
+// 1. The text: what you shared, otherwise the clipboard
+var source = ShortcutInput
+if ShortcutInput == nil {
+    getClipboard() >> clip
+    source = clip
+}
+getTextFrom(input: source) >> sourceText
+var readText = sourceText
+
+// 2. Just a link? Read the article behind it
+if readText $$ "http" {
+    if readText :: "://" {
+        if readText !: " " {
+            getArticle(url: "${readText}") >> article
+            articleDetail(detail: Body, article: article) >> articleText
+            readText = articleText
+        }
+    }
+}
+
+if readText == nil {
+    alert(alert: "Select text in any app, tap Share, then ElevenLabs Reader. Or copy some text and run this shortcut. Links only work for article pages.", title: "Nothing to read", cancel: false)
+    exit(var: ShortcutInput)
+}
+
+// 3. Turn it into speech
+setValue(key: "text", value: "${readText}", dictionary: request) >> payload
+// 🔑 Your ElevenLabs API key goes in the next line
+downloadURL(url: "https://api.elevenlabs.io/v1/text-to-speech/${voiceID}?output_format=mp3_44100_128", method: POST, headers: {"xi-api-key": "PASTE_YOUR_ELEVENLABS_API_KEY_HERE"}, requestType: File, requestVar: payload) >> audio
+
+// 4. Play it, or show what ElevenLabs said
+fileDetail(input: audio, property: File Extension) >> ext
+if ext == "mp3" {
+    if playMode == "player" {
+        quicklook(input: audio)
+    } else {
+        playSound(file: audio)
+    }
+} else {
+    valueFor(key: "detail", dictionary: audio) >> detail
+    if detail == nil {
+        quicklook(input: audio)
+    } else {
+        alert(alert: "${detail}  —  Check the API key on the 🔑 line, your ElevenLabs credits, or try a shorter selection.", title: "ElevenLabs couldn't read this", cancel: false)
+    }
+}

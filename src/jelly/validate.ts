@@ -8,14 +8,19 @@
 
 import {
   type Action,
+  type DictForm,
   type Param,
   catalog,
   closest,
+  dictionaryRule,
+  enumAlias,
+  enumSpellings,
   enumValues,
   findActions,
   findLibrary,
   libraryNames,
   suggestActions,
+  writeDict,
 } from "../catalog";
 import { type Interpolation, type Token, lex } from "./lexer";
 
@@ -71,6 +76,8 @@ const FOREIGN_KEYWORDS: Record<string, string> = {
   struct: "Jelly has no structs.",
 };
 const PREMIUM_LIBRARIES = new Set(["RoutineHubAds"]);
+/** Parameter types the docs don't describe precisely; their values aren't second-guessed. */
+const LOOSE_TYPES = new Set(["Unknown", "Literal", "Object", "Filter", "Filter Type", "Order", "Sort"]);
 // The open-source compiler spells a few library names differently from the docs.
 const LIBRARY_ALIASES: Record<string, string> = { ToolboxPro: "Toolbox", AShell: "aShell", AShellMini: "aShellMini" };
 
@@ -83,6 +90,8 @@ type Expr =
   | { k: "call"; tok: Token; name: string; args: Arg[] }
   | { k: "array"; tok: Token; items: Expr[] }
   | { k: "dict"; tok: Token }
+  /** The raw text of a bare multi-word enum value: `File Extension`, `en-US`, `ISO 8601`. */
+  | { k: "words"; tok: Token; raw: string }
   | { k: "binary"; tok: Token; op: string; left: Expr; right: Expr }
   | { k: "error"; tok: Token };
 
@@ -112,6 +121,8 @@ interface FuncDef {
 
 class Validator {
   private tokens: Token[];
+  /** Normalized source; token offsets point into it. */
+  private src: string;
   private pos = 0;
   private diags: Diagnostic[] = [];
   private imports = new Map<string, number>();
@@ -126,8 +137,9 @@ class Validator {
   private reportedUndefined = new Set<string>();
 
   constructor(private source: string) {
-    const { tokens, problems } = lex(source);
+    const { tokens, problems, source: src } = lex(source);
     this.tokens = tokens;
+    this.src = src;
     for (const p of problems) this.report(p.severity, p.line, p.col, p.message, p.fix);
     for (const g of GLOBALS) this.scopes[0].vars.set(g, { kind: "global", line: 0 });
   }
@@ -333,7 +345,7 @@ class Validator {
       this.skipLine();
       return;
     }
-    if (t.type === "string" || t.type === "mstring" || t.type === "number") {
+    if (t.type === "string" || t.type === "mstring" || t.type === "number" || t.type === "dict") {
       this.warn(t, "A value on its own line does nothing.", 'To create text use `text(text: "…") >> name` or `var name = "…"`.');
       this.next();
       this.endOfStatement();
@@ -919,6 +931,10 @@ class Validator {
       this.next();
       return { k: "number", tok: t };
     }
+    if (t.type === "dict") {
+      this.next();
+      return { k: "dict", tok: t };
+    }
     if (t.type === "punct" && t.value === "[") return this.parseArray();
     if (t.type === "punct" && t.value === "{") return this.parseDict();
     if (t.type === "punct" && t.value === "(") {
@@ -951,7 +967,7 @@ class Validator {
         } else if (!["if", "else", "case"].includes(nextWord.value)) {
           const words = [t.value];
           while (this.at("ident") && this.peek().line === t.line) words.push(this.next().value);
-          this.error(t, `\`${words.join(" ")}\` — names and values can't contain spaces.`, `If it's a choice/enum value, write it without spaces (e.g. \`${words.map(cap).join("")}\`); if it's text, put it in quotes.`);
+          this.error(t, `\`${words.join(" ")}\` — names can't contain spaces.`, "If it's text, put it in quotes. Setting (enum) values may contain spaces only as an action argument, spelled exactly as get_action lists them.");
           expr.name = words.join("");
         }
       }
@@ -1044,6 +1060,47 @@ class Validator {
     return { k: "dict", tok: open };
   }
 
+  /**
+   * Reads a bare multi-token enum value as raw text — `File Extension`, `en-US`, `ISO 8601`,
+   * `1920x1080`, `Rating (This Version)` — when the action's parameter is an enumeration and the
+   * text is a known spelling or plain words. Returns undefined to parse the value normally.
+   */
+  private enumWords(fn: string, label: string): (Expr & { k: "words" }) | undefined {
+    const spellings = new Set<string>();
+    let isEnum = false;
+    for (const a of findActions(fn)) {
+      const p = a.params.find((x) => x.name === label);
+      if (p?.enum && (p.type === "Enum" || p.type === "DynamicEnum")) {
+        isEnum = true;
+        for (const v of enumSpellings(p)) spellings.add(v);
+      }
+      // Loosely documented shapes (filter sort keys, untyped parameters): the docs write bare
+      // multi-word values such as `sortBy: Creation Date`, so don't reject them.
+      if (p && LOOSE_TYPES.has(p.type)) isEnum = true;
+    }
+    if (!isEnum) return undefined;
+    let k = 0;
+    let depth = 0;
+    while (true) {
+      const t = this.peek(k);
+      if (t.type === "eof" || t.type === "newline" || t.type === "string" || t.type === "mstring" || t.type === "dict") break;
+      if (t.type === "punct") {
+        if (t.value === "(" || t.value === "[") depth++;
+        else if (t.value === ")" || t.value === "]") {
+          if (depth === 0) break;
+          depth--;
+        } else if (t.value === "," && depth === 0) break;
+      }
+      k++;
+    }
+    if (k < 2 || depth !== 0) return undefined;
+    const first = this.peek();
+    const raw = this.src.slice(first.start, this.peek(k - 1).end);
+    if (!spellings.has(raw) && !/^[A-Za-z0-9][A-Za-z0-9 '-]* [A-Za-z0-9 '-]*$/.test(raw)) return undefined;
+    for (let n = 0; n < k; n++) this.next();
+    return { k: "words", tok: first, raw };
+  }
+
   private parseCall(): Expr & { k: "call" } {
     const nameTok = this.next();
     const open = this.next(); // (
@@ -1066,7 +1123,7 @@ class Validator {
           this.warn(labelTok, `\`${labelTok.value}:\` has no value.`, "Give it a value or remove the label.");
           continue;
         }
-        args.push({ label: labelTok.value, labelTok, value: this.parseExpr() });
+        args.push({ label: labelTok.value, labelTok, value: this.enumWords(nameTok.value, labelTok.value) ?? this.parseExpr() });
       } else {
         args.push({ value: this.parseExpr() });
       }
@@ -1114,7 +1171,10 @@ class Validator {
         else this.warn(e.tok, "Math isn't evaluated inside arguments or conditions.", 'Use `calculate(input: "${a} + 1") >> result` first.');
         return;
       case "dict":
-        if (where !== "arg") this.warn(e.tok, "Inline `{ … }` dictionaries aren't supported here.", 'Use `dictionary(json: "{\\"key\\": \\"value\\"}") >> dict`.');
+        if (where !== "arg") this.warn(e.tok, "Inline `{ … }` dictionaries aren't supported here.", 'Use `dictionary(json: {"key": "value"}) >> dict`.');
+        return;
+      case "words":
+        this.error(e.tok, `\`${e.raw}\` — names can't contain spaces.`, "If it's text, put it in quotes.");
         return;
       default:
         return;
@@ -1266,6 +1326,13 @@ class Validator {
         continue;
       }
       this.checkParamValue(action, param, arg.value);
+      if (arg.value.k === "dict" && arg !== call.args[call.args.length - 1]) {
+        this.warn(
+          arg.value.tok,
+          `Put \`${arg.label}:\` last in the call.`,
+          "In the Jellycuts app a `{ … }` value that it can't read swallows the arguments after it; keeping it last keeps them safe.",
+        );
+      }
     }
     // Only the Shortcuts library marks optional parameters in its docs.
     if (action.library === "Shortcuts") {
@@ -1281,23 +1348,41 @@ class Validator {
     const values = enumValues(param);
     const where = `\`${param.name}\` of \`${action.name}\``;
     if ((param.type === "Enum" || param.type === "DynamicEnum") && values) {
-      if (value.k === "ident" && !value.modifiers.length) {
-        if (values.includes(value.name)) return;
-        const isVar = this.lookup(value.name) || LOOP_VAR.test(value.name);
-        if (isVar) {
+      const spelling = value.k === "words" ? value.raw : value.k === "ident" && !value.modifiers.length && !value.index ? value.name : undefined;
+      if (spelling !== undefined) {
+        if (values.includes(spelling)) return;
+        const alias = enumAlias(param, spelling);
+        if (alias?.status === "confirmed") return;
+        if (alias?.status === "docs") {
+          this.warn(value.tok, `The docs write \`${spelling}\` here, but Shortcuts spells it \`${alias.to}\`.`, `Write \`${param.name}: ${alias.to}\`.`);
+          return;
+        }
+        if (alias) {
+          // The app reads the real value; the compiler's identifier is taken for a variable name.
+          this.error(
+            value.tok,
+            `\`${spelling}\` isn't how Jellycuts spells this value — the app reports "The variable ${spelling} does not exist in the scope".`,
+            `Write \`${param.name}: ${alias.to}\` (spaces included, no quotes).`,
+          );
+          return;
+        }
+        if (value.k === "ident" && (this.lookup(value.name) || LOOP_VAR.test(value.name))) {
           if (param.type === "Enum") this.warn(value.tok, `${where} expects one of its fixed values; a variable may not work here.`, `Values: ${values.join(", ")}.`);
           return;
         }
-        const ci = values.find((v) => v.toLowerCase() === value.name.toLowerCase().replace(/\s+/g, ""));
-        const sugg = ci ? [ci] : closest(value.name, values);
-        this.error(value.tok, `\`${value.name}\` isn't a valid value for ${where}.`, (sugg.length ? `Did you mean \`${sugg[0]}\`? ` : "") + `Valid: ${values.join(", ")}.`);
+        if (param.type === "DynamicEnum" && value.k === "words") return; // free text is allowed for dynamic enums
+        const loose = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const near = values.find((v) => loose(v) === loose(spelling));
+        const sugg = near ? [near] : closest(spelling, values);
+        if (param.type === "DynamicEnum" && !near) return;
+        this.error(value.tok, `\`${spelling}\` isn't a valid value for ${where}.`, (sugg.length ? `Did you mean \`${sugg[0]}\`? ` : "") + `Valid: ${values.join(", ")}.`);
         return;
       }
       if (value.k === "string" && !value.interps.length) {
         const text = value.tok.value;
-        const hit = values.find((v) => v === text || v.toLowerCase() === text.toLowerCase().replace(/\s+/g, ""));
+        const hit = values.find((v) => v === text) ?? enumAlias(param, text)?.to ?? values.find((v) => v.toLowerCase() === text.toLowerCase());
         if (param.type === "DynamicEnum" && !hit) return; // free text is allowed for dynamic enums
-        this.error(value.tok, `${where} takes a bare word, not a quoted string.`, hit ? `Write \`${param.name}: ${hit}\`.` : `Valid: ${values.join(", ")}.`);
+        this.error(value.tok, `${where} takes a bare value, not a quoted string.`, hit ? `Write \`${param.name}: ${hit}\` (no quotes).` : `Valid: ${values.join(", ")}.`);
         return;
       }
       if (value.k === "number" && param.type === "DynamicEnum") return;
@@ -1330,22 +1415,7 @@ class Validator {
         }
         break;
       case "Dictionary":
-        if (value.k === "string" && !value.interps.length) {
-          const json = value.tok.value.replace(/\\"/g, '"');
-          if (json.trim().startsWith("{")) {
-            try {
-              JSON.parse(json);
-            } catch {
-              this.error(value.tok, `The JSON for ${where} isn't valid.`, 'Use double quotes escaped as \\" around keys and text: "{\\"key\\": \\"value\\"}".');
-            }
-          }
-          return;
-        }
-        if (value.k === "dict") {
-          this.warn(value.tok, `Pass JSON for ${where} inside a string.`, `Write \`${param.name}: "{\\"key\\": \\"value\\"}"\` (escape the inner quotes).`);
-          return;
-        }
-        break;
+        return this.checkDictionary(action, param, value);
       case "Variable":
       case "Variable Array":
         if (value.k === "string" || value.k === "number" || value.k === "array") {
@@ -1372,6 +1442,76 @@ class Validator {
         return;
     }
     this.checkValueExpr(value, "arg");
+  }
+
+  /**
+   * Dictionary parameters, using what the Jellycuts app confirmed (data/app-confirmed.json):
+   * dictionary(json:) takes plain JSON in braces, downloadURL's headers takes JSON in braces with
+   * escaped quotes, and neither accepts JSON inside a quoted string.
+   */
+  private checkDictionary(action: Action, param: Param, value: Expr) {
+    const rule = dictionaryRule(action, param);
+    const want = rule.accepted[0];
+    const where = `\`${param.name}\` of \`${action.name}\``;
+    const asWanted = (json: string) => `Write \`${param.name}: ${writeDict(json, want)}\``;
+    if (value.k === "string") {
+      const json = value.tok.value.replace(/\\"/g, '"').trim();
+      this.error(
+        value.tok,
+        `JSON in a quoted string doesn't work for ${where} — the app reports "Unable to find valid JSON".`,
+        json.startsWith("{") && !value.interps.length ? `${asWanted(json)} (no quotes around the braces).` : `${asWanted('{"key": "value"}')} (no quotes around the braces).`,
+      );
+      return;
+    }
+    if (value.k !== "dict") {
+      if (value.k === "ident" && !this.lookup(value.name)) this.checkValueExpr(value, "arg");
+      else if (value.k === "ident") {
+        this.warn(value.tok, `${where} takes the JSON itself; a variable isn't accepted here.`, `${asWanted('{"key": "value"}')}. To put variables into JSON, build it with dictionary(json:) + setValue.`);
+      } else this.checkValueExpr(value, "arg");
+      return;
+    }
+    const raw = value.tok.value;
+    if (raw.includes("${")) {
+      this.error(
+        value.tok,
+        `Variables don't work inside JSON for ${where} — the \`\${…}\` would be sent as literal text.`,
+        'Build the dictionary first: `dictionary(json: {"key": ""}) >> d`, then `setValue(key: "key", value: "${name}", dictionary: d) >> filled`, and pass `filled`.',
+      );
+      return;
+    }
+    // Plain JSON parses as it is; the escaped form parses once every \\" becomes ".
+    const parses = (text: string) => {
+      try {
+        JSON.parse(text);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const hasQuotes = raw.includes('"');
+    const form: DictForm | undefined = !hasQuotes ? undefined : parses(raw) ? "plain" : !/(^|[^\\])"/.test(raw) && parses(raw.replace(/\\"/g, '"')) ? "escaped" : undefined;
+    if (hasQuotes ? !form : !parses(raw)) {
+      this.error(
+        value.tok,
+        `This isn't valid JSON — the app reports "Unable to find valid JSON".`,
+        `Quote every key and text value, using one kind of quote throughout: ${asWanted('{"key": "value"}')}.`,
+      );
+      return;
+    }
+    if (!form || rule.accepted.includes(form)) return;
+    if (rule.rejected.includes(form)) {
+      this.error(
+        value.tok,
+        `${where} needs ${want === "escaped" ? "every quote inside the braces escaped as \\\"" : "plain quotes inside the braces"} — written this way the app reports "Unable to find valid JSON".`,
+        `${asWanted(raw)}.`,
+      );
+      return;
+    }
+    this.warn(
+      value.tok,
+      `This way of writing ${where} hasn't been confirmed in the Jellycuts app.`,
+      rule.confirmed ? `${asWanted(raw)} — the form the app accepts here.` : `${asWanted(raw)} — the form \`downloadURL\`'s headers needs, which the app accepts.`,
+    );
   }
 
   private finalChecks() {
@@ -1404,6 +1544,8 @@ function describe(t: Token): string {
     case "string":
     case "mstring":
       return "a string";
+    case "dict":
+      return "a `{ … }` value";
     case "number":
       return `\`${t.value}\``;
     default:

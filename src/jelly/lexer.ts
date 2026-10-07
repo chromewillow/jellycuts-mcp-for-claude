@@ -1,6 +1,6 @@
 // Tokenizer for Jelly source. Tolerant: it never throws, it records problems instead.
 
-export type TokenType = "ident" | "number" | "string" | "mstring" | "punct" | "newline" | "eof";
+export type TokenType = "ident" | "number" | "string" | "mstring" | "dict" | "punct" | "newline" | "eof";
 
 export interface Interpolation {
   /** Source text between `${` and `}`. */
@@ -14,6 +14,9 @@ export interface Token {
   value: string;
   line: number;
   col: number;
+  /** Offsets into the normalized source (`lex().source`), end exclusive. */
+  start: number;
+  end: number;
   /** For strings: decoded text segments are not needed, only the interpolations. */
   interpolations?: Interpolation[];
 }
@@ -74,7 +77,7 @@ const PUNCTUATION = [
 const isIdentStart = (c: string) => /[A-Za-z_]/.test(c);
 const isIdentPart = (c: string) => /[A-Za-z0-9_$]/.test(c);
 
-export function lex(source: string): { tokens: Token[]; problems: LexProblem[] } {
+export function lex(source: string): { tokens: Token[]; problems: LexProblem[]; source: string } {
   const tokens: Token[] = [];
   const problems: LexProblem[] = [];
   let src = source.replace(/\r\n?/g, "\n");
@@ -108,7 +111,7 @@ export function lex(source: string): { tokens: Token[]; problems: LexProblem[] }
   };
 
   /** Reads a string body starting after the opening delimiter, reporting unterminated strings. */
-  const readString = (multi: boolean, startLine: number, startCol: number): Token => {
+  const readString = (multi: boolean, startLine: number, startCol: number, startOffset: number): Token => {
     const interpolations: Interpolation[] = [];
     let value = "";
     let closed = false;
@@ -180,16 +183,66 @@ export function lex(source: string): { tokens: Token[]; problems: LexProblem[] }
         message: multi ? 'Multi-line string opened with """ is never closed.' : 'String is never closed with `"`.',
       });
     }
-    return { type: multi ? "mstring" : "string", value, line: startLine, col: startCol, interpolations };
+    return { type: multi ? "mstring" : "string", value, line: startLine, col: startCol, start: startOffset, end: i, interpolations };
+  };
+
+  /**
+   * A `{ … }` value after `label:` or `=` (a JSON dictionary literal), kept as one raw token.
+   * Quotes may be plain (`{"a": "b"}`) or backslash-escaped (`{\"a\": \"b\"}`); braces inside
+   * either kind of quoted text don't count.
+   */
+  const readDict = (startLine: number, startCol: number, startOffset: number): Token => {
+    let j = i;
+    let depth = 0;
+    let plain = false;
+    let escaped = false;
+    let close = -1;
+    while (j < src.length) {
+      const ch = src[j];
+      if (plain) {
+        if (ch === "\\") j++;
+        else if (ch === '"') plain = false;
+        j++;
+        continue;
+      }
+      if (ch === "\\" && src[j + 1] === '"') {
+        escaped = !escaped;
+        j += 2;
+        continue;
+      }
+      if (!escaped && ch === '"') plain = true;
+      else if (!escaped && ch === "{") depth++;
+      else if (!escaped && ch === "}" && --depth === 0) {
+        close = j;
+        break;
+      }
+      j++;
+    }
+    if (close < 0) {
+      problems.push({ line: startLine, col: startCol, severity: "error", message: "This `{` is never closed with `}`." });
+      close = src.indexOf("\n", i);
+      if (close < 0) close = src.length;
+      close--;
+    }
+    const value = src.slice(i, close + 1);
+    advance(value.length);
+    return { type: "dict", value, line: startLine, col: startCol, start: startOffset, end: i };
+  };
+
+  /** The last token that isn't a line break, to tell a `{` value from a `{` block. */
+  const lastSignificant = () => {
+    for (let k = tokens.length - 1; k >= 0; k--) if (tokens[k].type !== "newline") return tokens[k];
+    return undefined;
   };
 
   while (i < src.length) {
     const c = src[i];
     const startLine = line;
     const startCol = col;
+    const startOffset = i;
 
     if (c === "\n") {
-      tokens.push({ type: "newline", value: "\n", line, col });
+      tokens.push({ type: "newline", value: "\n", line, col, start: i, end: i + 1 });
       advance();
       continue;
     }
@@ -211,13 +264,20 @@ export function lex(source: string): { tokens: Token[]; problems: LexProblem[] }
     }
     if (src.startsWith('"""', i)) {
       advance(3);
-      tokens.push(readString(true, startLine, startCol));
+      tokens.push(readString(true, startLine, startCol, startOffset));
       continue;
     }
     if (c === '"') {
       advance();
-      tokens.push(readString(false, startLine, startCol));
+      tokens.push(readString(false, startLine, startCol, startOffset));
       continue;
+    }
+    if (c === "{") {
+      const prev = lastSignificant();
+      if (prev?.type === "punct" && (prev.value === ":" || prev.value === "=") && prev.line === line) {
+        tokens.push(readDict(startLine, startCol, startOffset));
+        continue;
+      }
     }
     if (/[0-9]/.test(c)) {
       let v = "";
@@ -226,7 +286,7 @@ export function lex(source: string): { tokens: Token[]; problems: LexProblem[] }
         v += src[i];
         advance();
       }
-      tokens.push({ type: "number", value: v, line: startLine, col: startCol });
+      tokens.push({ type: "number", value: v, line: startLine, col: startCol, start: startOffset, end: i });
       continue;
     }
     if (isIdentStart(c)) {
@@ -237,18 +297,18 @@ export function lex(source: string): { tokens: Token[]; problems: LexProblem[] }
         v += src[i];
         advance();
       }
-      tokens.push({ type: "ident", value: v, line: startLine, col: startCol });
+      tokens.push({ type: "ident", value: v, line: startLine, col: startCol, start: startOffset, end: i });
       continue;
     }
     const p = PUNCTUATION.find((op) => src.startsWith(op, i));
     if (p) {
-      tokens.push({ type: "punct", value: p, line: startLine, col: startCol });
+      tokens.push({ type: "punct", value: p, line: startLine, col: startCol, start: startOffset, end: startOffset + p.length });
       advance(p.length);
       continue;
     }
     problems.push({ line, col, severity: "error", message: `Unexpected character \`${c}\`.` });
     advance();
   }
-  tokens.push({ type: "eof", value: "", line, col });
-  return { tokens, problems };
+  tokens.push({ type: "eof", value: "", line, col, start: i, end: i });
+  return { tokens, problems, source: src };
 }
