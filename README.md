@@ -70,6 +70,8 @@ From now on, every change pushed to this repo redeploys automatically.
 
 The action catalog in `data/catalog.json` is generated from the official [Jellycuts docs](https://docs.jellycuts.com). To refresh it after the docs change, run `npm run build:catalog` on a computer (or ask Claude Code to do it) and push.
 
+The docs don't cover everything the Jellycuts app checks, so `data/app-confirmed.json` records rules confirmed by building test scripts in the app (for example, which way to write JSON for each parameter). When the app reports an error the connector didn't catch, paste the whole console into a chat with Claude Code: the script and its console lines become a test in `test/fixtures/app-console/`, so the connector can't make that mistake again.
+
 ## For developers
 
 ```bash
@@ -87,6 +89,7 @@ How it fits together:
 - `src/mcp.ts` — the MCP tools and the instructions Claude sees.
 - `src/guide.ts` — the Jelly guide returned by `jelly_guide`.
 - `src/jelly/` — a tolerant Jelly tokenizer and validator.
+- `data/app-confirmed.json` + `test/app-console.test.ts` — rules confirmed in the Jellycuts app, and the scripts that prove them.
 - `src/catalog.ts` + `data/catalog.json` — action lookup and search.
 - `src/share.ts`, `src/pages.ts` — compressed share links and the HTML pages.
 

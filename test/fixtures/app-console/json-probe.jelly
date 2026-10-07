@@ -1,0 +1,10 @@
+import Shortcuts
+// Test file: every line below checks one thing. Build once, then send me the whole console.
+dictionary(json: {"model_id": "abc"}) >> t3
+dictionary(json: {"xi-api-key": "abc"}) >> t4
+dictionary(json: {"a": "b", "c": "d"}) >> t5
+downloadURL(url: "https://example.com", headers: {"Accept": "abc"}) >> t6
+downloadURL(url: "https://example.com", headers: {"xi-api-key": "abc"}) >> t7
+downloadURL(url: "https://example.com", headers: {\"xi-api-key\": \"abc\"}) >> t8
+downloadURL(url: "https://example.com", headers: {"xi_api_key": "abc"}) >> t9
+downloadURL(url: "https://example.com", method: POST, headers: {"Accept": "abc"}) >> t10

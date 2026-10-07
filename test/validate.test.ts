@@ -52,7 +52,9 @@ showResult(text: "Logged \${drink}")`,
 formatDate(date: "\${CurrentDate}", dStyle: Long, tStyle: Short) >> today
 list(items: ["Red", "Green", "Blue"]) >> colors
 choose(list: colors, prompt: "Pick a color") >> picked
-dictionary(json: "{\\"day\\": \\"\${today}\\", \\"color\\": \\"\${picked}\\"}") >> entry
+dictionary(json: {"day": "", "color": ""}) >> blank
+setValue(key: "day", value: "\${today}", dictionary: blank) >> dated
+setValue(key: "color", value: "\${picked}", dictionary: dated) >> entry
 valueFor(key: "color", dictionary: entry) >> chosen
 adjustDate(operation: Add, duration: "10 min", date: "\${CurrentDate}") >> later
 var note = "Today is \${today}. Favorite color: \${chosen}"
@@ -121,9 +123,9 @@ describe("catches common mistakes", () => {
     ["unknown action with suggestion", `import Shortcuts\nshowNotification(body: "hi")`, /Unknown action `showNotification`[\s\S]*sendNotification/],
     ["unlabelled arguments", `import Shortcuts\ntext(text: "x") >> t\nquicklook(t)`, /must be labelled[\s\S]*quicklook\(input:/],
     ["wrong label", `import Shortcuts\nalert(message: "hi")`, /no parameter `message`/],
-    ["wrong enum casing", `import Shortcuts\nchangeCase(text: "hi", case: UPPERCASE)`, /`UPPERCASE` isn't a valid value[\s\S]*uppercase/],
-    ["quoted enum", `import Shortcuts\naskForInput(prompt: "Age?", type: "Number")`, /bare word/],
-    ["enum with spaces", `import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: Item at Index, index: "1")`, /can't contain spaces/],
+    ["spaced words in an untyped parameter", `import Actions\naddToList(list: foo bar, item: "x")`, /names can't contain spaces/],
+    ["quoted enum", `import Shortcuts\naskForInput(prompt: "Age?", type: "Number")`, /bare value/],
+    ["misspelt multi-word enum", `import Shortcuts\ndeviceDetails(detail: Device Nmae) >> n`, /isn't a valid value[\s\S]*Device Name/],
     ["missing library import", `import Shortcuts\ngetValue(keyPath: "x")`, /DataJar library, which isn't imported/],
     ["unknown library", `import Shortcutz`, /Unknown library `Shortcutz`/],
     ["else if", `import Shortcuts\nvar a = 1\nif a == 1 {\n} else if a == 2 {\n}`, /`else if` isn't supported/],
@@ -133,7 +135,8 @@ describe("catches common mistakes", () => {
     ["curly quotes", `import Shortcuts\nalert(alert: “hi”)`, /Curly quotes/],
     ["Jelly 2 global names", `import Shortcuts\nvar x = Shortcut Input`, /`Shortcut Input` is the old Jelly 2 spelling[\s\S]*ShortcutInput/],
     ["unquoted time span", `import Shortcuts\ntimer(duration: 10 min)`, /needs a unit, in quotes/],
-    ["invalid JSON", `import Shortcuts\ndictionary(json: "{name: 1}")`, /JSON .* isn't valid/],
+    ["invalid JSON", `import Shortcuts\ndictionary(json: {name: 1})`, /isn't valid JSON[\s\S]*Unable to find valid JSON/],
+    ["JSON in a quoted string", `import Shortcuts\ndictionary(json: "{\\"name\\": 1}")`, /quoted string[\s\S]*json: \{"name": 1\}/],
     ["func used before declaration", `import Shortcuts\nhelper(x: 1)\nfunc helper(x) {\n  return x\n}`, /called before its func is declared/],
     ["assigning to an output", `import Shortcuts\nbatteryLevel() >> level\nlevel = 5`, /read-only/],
     ["assigning to a built-in", `import Shortcuts\nShortcutInput = "x"`, /built-in variable/],
@@ -167,12 +170,60 @@ describe("catches common mistakes", () => {
     ["semicolons", `import Shortcuts\nvibrate();`, /semicolons/],
     ["parentheses around an if condition", `import Shortcuts\nbatteryLevel() >> level\nif (level < 20) {\n  vibrate()\n}`, /Parentheses around an if condition/],
     ["menu prompt in parentheses", `import Shortcuts\nmenu("Pick") {\ncase "A":\n  vibrate()\n}`, /menu\("Prompt"\) \{` is rejected/],
+    ["enum written as the compiler's identifier", `import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: ItemAtIndex, index: "1")`, /open-source compiler's name[\s\S]*type: Item At Index/],
+    ["variables inside JSON", `import Shortcuts\nvar n = "x"\ndictionary(json: {"name": "\${n}"})`, /can't contain variables[\s\S]*setValue/],
+    ["a { } value before other arguments", `import Shortcuts\ndownloadURL(url: "https://example.com", headers: {\\"a\\": \\"b\\"}, method: GET) >> r`, /Put `headers:` after the other arguments/],
+    ["enum letter case", `import Shortcuts\nchangeCase(text: "hi", case: UPPERCASE)`, /only in letter case[\s\S]*case: uppercase/],
+    ["requestJSON, whose form isn't confirmed", `import Shortcuts\ndownloadURL(url: "https://example.com", method: POST, requestType: Json, requestJSON: {"a": "b"}) >> r`, /isn't confirmed yet[\s\S]*requestType: File/],
+    ["a quoted text variable as JSON", `import Shortcuts\nvar j = "x"\ndictionary(json: "\${j}") >> d`, /isn't confirmed to work/],
   ];
   for (const [name, code, pattern] of warningCases) {
     it(`warns: ${name}`, () => {
       expect(messages(warnings(code))).toMatch(pattern);
     });
   }
+
+  it("treats inferred rules as warnings, not errors", () => {
+    for (const code of [
+      `import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: ItemAtIndex, index: "1")`,
+      `import Shortcuts\nvar n = "x"\ndictionary(json: {"name": "\${n}"})`,
+      `import Shortcuts\ndownloadURL(url: "https://example.com", method: POST, requestType: Json, requestJSON: {"a": "b"}) >> r`,
+    ]) {
+      expect(messages(errors(code)), code).toBe("");
+    }
+  });
+
+  it("notes docs spellings whose letter case isn't confirmed", () => {
+    const result = validateJelly(`import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: Item at Index, index: "1")`);
+    expect(result.ok).toBe(true);
+    expect(messages(result.diagnostics.filter((d) => d.severity === "info"))).toMatch(/Shortcuts spells it `Item At Index`/);
+  });
+
+  it("accepts symbol-named and punctuated enum values", () => {
+    for (const code of [
+      `import Shortcuts\nmath(input: "2", operation: addition, operand: "3") >> r`,
+      `import Shortcuts\nmath(input: "2", operation: multiplication, operand: "3", scientific: x^y) >> r`,
+      `import Shortcuts\nformatDate(date: "\${CurrentDate}", dStyle: ISO 8601) >> d`,
+      `import Shortcuts\nspeakText(text: "hi", language: en-US)`,
+    ]) {
+      expect(messages(errors(code)), code).toBe("");
+    }
+  });
+
+  it("accepts the docs' bare filter values", () => {
+    const code = `import Shortcuts\nfilterNotes(input: All Notes, filterType: All, sortBy: Creation Date, order: Oldest First, limit: 20) >> notes`;
+    expect(messages(errors(code))).toBe("");
+  });
+
+  it("never hangs on a stray closer inside an unclosed menu", () => {
+    for (const junk of ['import Shortcuts\nmenu "P" {\n]', 'import Shortcuts\nmenu "P" {\n)', 'import Shortcuts\nmenu "P" {\n}}]']) {
+      expect(validateJelly(junk).ok).toBe(false);
+    }
+  });
+
+  it("reads escaped backslashes inside escaped JSON without losing the rest of the line", () => {
+    expect(messages(errors('import Shortcuts\ndownloadURL(url: "https://e.com", headers: {\\"a\\": \\"b\\\\\\"c\\"}) >> r'))).not.toMatch(/never closed/);
+  });
 
   it("reports line and column numbers", () => {
     const [d] = errors(`import Shortcuts\n\n  showNotification(body: "x")`);

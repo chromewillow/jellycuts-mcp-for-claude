@@ -18,7 +18,15 @@ describe("catalog data", () => {
   it("knows the enum values for common parameters", () => {
     const ask = findActions("askForInput")[0];
     const type = ask.params.find((p) => p.name === "type")!;
-    expect(catalog.enums[type.enum!]).toEqual(expect.arrayContaining(["Text", "Number", "DateandTime"]));
+    expect(catalog.enums[type.enum!]).toEqual(expect.arrayContaining(["Text", "Number", "Date and Time"]));
+    expect(catalog.enumAliases[type.enum!].DateandTime).toEqual({ to: "Date and Time", status: "internal" });
+  });
+
+  it("has no padded enum values and every alias points at a listed value", () => {
+    for (const [name, values] of Object.entries(catalog.enums)) {
+      for (const v of values) expect(v, name).toBe(v.trim());
+      for (const alias of Object.values(catalog.enumAliases[name] ?? {})) expect(values, name).toContain(alias.to);
+    }
   });
 
   it("marks optional parameters for Shortcuts actions", () => {
@@ -60,6 +68,21 @@ describe("suggestions and formatting", () => {
   it("maps invented names to real actions", () => {
     expect(suggestActions("showNotification")[0]).toBe("sendNotification");
     expect(suggestActions("sendNotificaton")).toContain("sendNotification");
+  });
+
+  it("lists real Shortcuts spellings, spaces included", () => {
+    const text = formatActionDetail(findActions("fileDetail")[0]);
+    expect(text).toContain("File Extension");
+    expect(text).not.toContain("FileExtension");
+    expect(text).toContain("spaces included");
+  });
+
+  it("shows the confirmed JSON form for dictionary parameters", () => {
+    expect(formatActionDetail(findActions("dictionary")[0])).toContain('json: {"name": "Ada", "age": 36}');
+    const download = formatActionDetail(findActions("downloadURL")[0]);
+    expect(download).toContain('headers: {\\"Accept\\": \\"application/json\\"}');
+    expect(download).toContain("after the other arguments");
+    expect(download).toContain("requestType: File, requestVar");
   });
 
   it("formats details with labels, enum values and docs link", () => {

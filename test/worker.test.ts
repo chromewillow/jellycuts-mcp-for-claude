@@ -1,6 +1,8 @@
+/// <reference types="vite/client" />
 import { describe, expect, it } from "vitest";
 import worker from "../src/index";
 import { decodeShare, encodeShare, slugify } from "../src/share";
+import readerScript from "./fixtures/app-console/reader-escaped-headers.jelly?raw";
 
 const ORIGIN = "https://jellycuts-mcp.example.workers.dev";
 const get = (path: string, headers: Record<string, string> = {}) => worker.fetch(new Request(ORIGIN + path, { headers }));
@@ -113,5 +115,32 @@ describe("MCP protocol", () => {
     const link = /https:\/\/\S+\/s\/Say-Hi#(\S+)/.exec(text);
     expect(link).not.toBeNull();
     expect(await decodeShare(link![1])).toEqual({ name: "Say Hi", code });
+  });
+
+  it("get_action shows the spellings and JSON forms the Jellycuts app accepts", async () => {
+    const { text } = await callTool("get_action", { names: ["fileDetail", "dictionary", "downloadURL"] });
+    expect(text).toContain("File Extension");
+    expect(text).not.toContain("FileExtension");
+    expect(text).toContain('json: {"name": "Ada", "age": 36}');
+    expect(text).toContain('headers: {\\"Accept\\": \\"application/json\\"}');
+  });
+
+  it("validate_jelly answers in the app's own words", async () => {
+    const { text } = await callTool("validate_jelly", {
+      code: 'import Shortcuts\ndictionary(json: "{\\"a\\": 1}") >> d\nfileDetail(input: d, property: FileExtension) >> e',
+    });
+    expect(text).toContain("Unable to find valid JSON");
+    expect(text).toContain("The variable FileExtension does not exist in the scope");
+  });
+
+  it("get_action points language statements at the guide", async () => {
+    const { text } = await callTool("get_action", { names: ["menu"] });
+    expect(text).toContain("part of the Jelly language");
+  });
+
+  it("share_jelly accepts the ElevenLabs Reader without allow_errors", async () => {
+    const { text, isError } = await callTool("share_jelly", { name: "ElevenLabs Reader", code: readerScript });
+    expect(isError).toBe(false);
+    expect(text).toContain("validated: no errors");
   });
 });

@@ -16,18 +16,20 @@ import { formatValidation, validateJelly } from "./jelly/validate";
 import { installLink } from "./share";
 
 export const SERVER_NAME = "jellycuts";
-export const SERVER_VERSION = "1.0.0";
+export const SERVER_VERSION = "1.1.0";
 
 export const INSTRUCTIONS = `This connector lets you build Apple Shortcuts for the user's iPhone with Jellycuts, an iOS app that compiles the Jelly scripting language into Shortcuts.
 
 Workflow for any "make me a shortcut" request:
 1. Call jelly_guide once per conversation before writing Jelly.
 2. Use search_actions to find actions, then get_action for EVERY action you plan to use — never guess function names, parameter labels or enum values.
-3. Write the script (import Shortcuts first, labelled arguments, outputs captured with >>).
-4. Call validate_jelly and fix every error.
+3. Write the script (import Shortcuts first, labelled arguments, outputs captured with >>). Write setting values exactly as get_action lists them, spaces included (property: File Extension, never FileExtension), and JSON parameters in the form get_action shows: dictionary(json: {"a": "b"}); downloadURL headers: {\\"a\\": \\"b\\"} as the last argument; never JSON inside quotes, never variables inside JSON.
+4. Call validate_jelly and fix every error. Its rules come from what the Jellycuts app actually accepts, so don't share with allow_errors to get around one.
 5. Call share_jelly and give the user the install link and the steps it returns.
-If the user reports an error from the Jellycuts app, fix the script, re-validate and share a new link.
+If the user reports an error from the Jellycuts app, ask for the whole console text, fix the script, re-validate and share a new link.
 Keep explanations short — the user is probably on their phone.`;
+
+const LANGUAGE_STATEMENTS = new Set(["menu", "case", "if", "else", "repeat", "repeatEach", "func", "macro", "var", "return", "import"]);
 
 const text = (s: string) => ({ content: [{ type: "text" as const, text: s }] });
 const failure = (s: string) => ({ content: [{ type: "text" as const, text: s }], isError: true });
@@ -117,6 +119,10 @@ export function createMcpServer(options: { origin: string }): McpServer {
       const parts: string[] = [];
       for (const raw of names) {
         const name = raw.trim().replace(/\(.*$/, "");
+        if (LANGUAGE_STATEMENTS.has(name)) {
+          parts.push(`### ${name}\n\`${name}\` is part of the Jelly language, not an action. See jelly_guide (control_flow, variables or functions) for its syntax.`);
+          continue;
+        }
         let matches = findActions(name);
         if (!matches.length) matches = findActionsIgnoringCase(name);
         if (library) {
