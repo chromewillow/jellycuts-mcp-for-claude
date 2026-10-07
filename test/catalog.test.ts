@@ -74,7 +74,8 @@ describe("suggestions and formatting", () => {
     expect(formatActionDetail(findActions("dictionary")[0])).toContain('json: {"name": "Ada", "age": 36}');
     const download = formatActionDetail(findActions("downloadURL")[0]);
     expect(download).toContain('headers: {\\"Accept\\": \\"application/json\\"}');
-    expect(download).toContain("Put it last");
+    expect(download).toContain("after the other arguments");
+    expect(download).toContain("requestType: File, requestVar");
   });
 
   it("formats details with labels, enum values and docs link", () => {

@@ -19,7 +19,8 @@ Remote MCP server (Cloudflare Worker) that helps Claude write Jelly scripts for 
 ## Jelly facts that drive the design
 - Evidence order: the Jellycuts app's console > docs (2026, names/labels/optional flags) > the open-source compiler (2024), which lags the app. Nothing outside the iPhone can run the real compiler, so ask the user to build a small test file when a rule is unknown.
 - Labels are required; time spans are quoted (`"10 min"`).
-- Enum values are the real Shortcuts spellings, spaces included and unquoted (`property: File Extension`). The compiler's Swift case names (`FileExtension`) fail in the app with "The variable FileExtension does not exist in the scope"; the catalog keeps them as aliases so the validator can name the fix.
+- Enum values are the real Shortcuts spellings, spaces included and unquoted (`property: File Extension`). The compiler's Swift case names (`FileExtension`) fail in the app with "The variable FileExtension does not exist in the scope" (confirmed for that value; expected for the others); the catalog keeps them as aliases so the validator can name the fix. Symbol-only values (`+`) keep their names (`addition`).
+- Validator severity: "error" only for what the app's console confirmed or plain syntax that can't build; inferred rules are warnings worded as inferred.
 - JSON parameters are bare braces, never a quoted string ("Unable to find valid JSON"): `dictionary(json: {"a": "b"})` takes plain quotes, `downloadURL` `headers:` takes escaped quotes `{\"a\": \"b\"}` and goes last. No variables inside JSON; fill a dictionary with `setValue` instead.
 - `&&`/`||` in `if` compile to the wrong condition; `if (…)` and `menu("…")` with parentheses fail in the open-source grammar — recommend the paren-free forms.
 - Shared scripts live in the URL fragment (deflate-raw + base64url); nothing is stored server-side.

@@ -194,7 +194,9 @@ function walk(dir, out = []) {
 // use real values too. Exception: when the real value is an internal code (a UTI, a number, a
 // bundle ID such as com.apple.speech.synthesis.voice.alex), people write the case name
 // (`voice: Alex`, `color: Red`), as the docs examples do.
-const isCode = (v) => /^[a-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(v) || /^\d+$/.test(v) || /[^\x20-\x7E]/.test(v) || /^WF[A-Z]/.test(v);
+// Symbol-only values (`+`, `-`) can't be written bare in Jelly, so they keep their names too.
+const isCode = (v) =>
+  /^[a-z0-9-]+(\.[A-Za-z0-9-]+)+$/.test(v) || /^\d+$/.test(v) || /[^\x20-\x7E]/.test(v) || /^WF[A-Z]/.test(v) || !/[A-Za-z0-9]/.test(v);
 
 const appConfirmed = JSON.parse(readFileSync(join(root, "data/app-confirmed.json"), "utf8"));
 const enums = {}; // enum name -> spellings to write, in source order
@@ -352,7 +354,12 @@ for (const a of byKey.values()) {
     }
   }
 }
-for (const a of byKey.values()) a.example = normalizeExample(a);
+for (const a of byKey.values()) {
+  const original = a.example;
+  a.example = normalizeExample(a);
+  // Shown as "adapted from the docs" so nobody mistakes the rewrite for the docs' own text.
+  if (a.example && a.example !== original) a.exampleAdapted = true;
+}
 
 // ---- #Color / #Icon values ---------------------------------------------------------------
 // The docs list lowercase names; the open-source compiler uses camelCase (lightBlue,

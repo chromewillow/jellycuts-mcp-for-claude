@@ -23,10 +23,10 @@ export const GUIDE_SECTIONS: GuideSection[] = [
 4. Capture an action's output with \`>> name\` and use \`name\` later. Names may only contain letters, digits and \`_\` — no spaces.
 5. Built-in variables are written without spaces: \`ShortcutInput\`, \`Clipboard\`, \`CurrentDate\`, \`Ask\`, and inside loops \`RepeatItem\` / \`RepeatIndex\`.
 6. Text goes in double quotes. Insert variables with \`\${name}\`. Escape a quote inside text as \`\\"\`.
-7. Setting (enumeration) parameters take the value exactly as \`get_action\` lists it — the real Shortcuts spelling, spaces included, no quotes: \`type: Number\`, \`property: File Extension\`, \`type: Item At Index\`. Never squash the spaces out: \`property: FileExtension\` fails with "The variable FileExtension does not exist in the scope". Time spans are quoted: \`duration: "10 min"\`.
+7. Setting (enumeration) parameters take the value exactly as \`get_action\` lists it — the real Shortcuts spelling, spaces included, no quotes: \`type: Number\`, \`property: File Extension\`, \`type: Item At Index\`. Don't squash the spaces out: \`property: FileExtension\` fails in the app with "The variable FileExtension does not exist in the scope", and other actions are expected to behave the same way. Time spans are quoted: \`duration: "10 min"\`.
 8. Define a \`func\` or \`macro\` above the place you call it.
 9. There is no \`else if\`, \`while\`, \`for\`, \`let\`, \`const\`, \`switch\` or semicolons. Use nested \`if\`, \`repeat\`, \`repeatEach\`, \`var\` and \`menu\`.
-10. JSON goes in braces with no quotes around it, and never contains variables. \`dictionary(json: {"name": "Ada"})\` uses plain quotes; \`downloadURL\`'s \`headers:\` needs every quote escaped, \`headers: {\\"Accept\\": \\"application/json\\"}\`, as the last argument. JSON inside a quoted string fails with "Unable to find valid JSON". \`get_action\` shows the form for each parameter.
+10. JSON goes in braces with no quotes around it, and doesn't contain variables (the docs say it can't). \`dictionary(json: {"name": "Ada"})\` uses plain quotes; \`downloadURL\`'s \`headers:\` needs every quote escaped, \`headers: {\\"Accept\\": \\"application/json\\"}\`, as the last argument. JSON inside a quoted string fails with "Unable to find valid JSON". \`get_action\` shows the form for each parameter.
 11. Validate with \`validate_jelly\` before handing the script to the user, then call \`share_jelly\`.`,
   },
   {
@@ -86,7 +86,7 @@ dictionary(json: {"name": "Ada", "age": 36}) >> person   // plain JSON in braces
 valueFor(key: "name", dictionary: person) >> name
 getItemFromList(list: groceries, type: Item At Index, index: "2") >> second
 \`\`\`
-JSON can't contain variables (a \`\${name}\` inside it is sent as literal text). Start from a dictionary and fill it with \`setValue\`:
+JSON can't contain variables (per the docs, a \`\${name}\` inside it isn't filled in). Start from a dictionary and fill it with \`setValue\`:
 \`\`\`jelly
 askForInput(prompt: "Your name?", type: Text) >> answer
 dictionary(json: {"name": "", "source": "shortcut"}) >> blank
@@ -184,7 +184,7 @@ showResult(text: message)
 - **Speak text:** \`speakText(text: "...")\`
 - **Ask the user:** \`askForInput(prompt: "...", type: Text) >> answer\` (types: Text, URL, Number, Date, Time, Date and Time); pick from a list: \`choose(list: items, prompt: "...") >> picked\`
 - **Web request / API:** \`urlContents(url: "https://...") >> response\` for a simple GET, or with a header: \`downloadURL(url: "https://...", method: GET, headers: {\\"Authorization\\": \\"Bearer YOUR_KEY\\"}) >> response\`; then \`getDictionaryFrom(input: response) >> data\` and \`valueFor(key: "field", dictionary: data) >> value\`.
-- **POST JSON that contains variables:** build the body with \`dictionary(json: {"text": ""}) >> blank\` and \`setValue(key: "text", value: "\${input}", dictionary: blank) >> body\`, then send it with \`downloadURL(url: "https://...", method: POST, requestType: File, requestVar: body, headers: {\\"Authorization\\": \\"Bearer YOUR_KEY\\"}) >> response\`. Headers can't hold variables, so an API key is written into the script; tell the user to paste theirs in and not to share the built shortcut. Keep \`headers\` last and to one key until more are confirmed.
+- **POST JSON that contains variables:** build the body with \`dictionary(json: {"text": ""}) >> blank\` and \`setValue(key: "text", value: "\${input}", dictionary: blank) >> body\`, then send it with \`downloadURL(url: "https://...", method: POST, requestType: File, requestVar: body, headers: {\\"Authorization\\": \\"Bearer YOUR_KEY\\"}) >> response\`. Headers can't hold variables, so an API key is written into the script; tell the user to paste theirs in and not to share the built shortcut. Put \`headers\` after the other arguments. One-key headers are confirmed; more keys should work but aren't confirmed yet. How the app wants \`requestJSON:\` written isn't confirmed, so prefer this \`requestType: File\` route for any JSON body.
 - **Clipboard:** \`getClipboard() >> clip\`, \`setClipboard(variable: value)\`
 - **Dates:** \`formatDate(date: "\${CurrentDate}", dStyle: Long, tStyle: Short) >> today\`, \`adjustDate(operation: Add, duration: "10 min", date: "\${CurrentDate}") >> later\`, \`timer(duration: "15 min")\`
 - **Device:** \`batteryLevel()\`, \`deviceDetails(detail: Device Name)\`, \`setBrightness(value: 0.5)\`, \`setVolume(level: 0.5)\`, \`setDND(state: true)\`, \`setWiFi(state: false)\`, \`setBluetooth(value: false)\`, \`lowPowerMode(state: true)\`

@@ -125,7 +125,6 @@ describe("catches common mistakes", () => {
     ["wrong label", `import Shortcuts\nalert(message: "hi")`, /no parameter `message`/],
     ["wrong enum casing", `import Shortcuts\nchangeCase(text: "hi", case: UPPERCASE)`, /`UPPERCASE` isn't a valid value[\s\S]*uppercase/],
     ["quoted enum", `import Shortcuts\naskForInput(prompt: "Age?", type: "Number")`, /bare value/],
-    ["enum written as the compiler's identifier", `import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: ItemAtIndex, index: "1")`, /does not exist in the scope[\s\S]*type: Item At Index/],
     ["misspelt multi-word enum", `import Shortcuts\ndeviceDetails(detail: Device Nmae) >> n`, /isn't a valid value[\s\S]*Device Name/],
     ["missing library import", `import Shortcuts\ngetValue(keyPath: "x")`, /DataJar library, which isn't imported/],
     ["unknown library", `import Shortcutz`, /Unknown library `Shortcutz`/],
@@ -138,7 +137,6 @@ describe("catches common mistakes", () => {
     ["unquoted time span", `import Shortcuts\ntimer(duration: 10 min)`, /needs a unit, in quotes/],
     ["invalid JSON", `import Shortcuts\ndictionary(json: {name: 1})`, /isn't valid JSON[\s\S]*Unable to find valid JSON/],
     ["JSON in a quoted string", `import Shortcuts\ndictionary(json: "{\\"name\\": 1}")`, /quoted string[\s\S]*json: \{"name": 1\}/],
-    ["variables inside JSON", `import Shortcuts\nvar n = "x"\ndictionary(json: {"name": "\${n}"})`, /Variables don't work inside JSON/],
     ["func used before declaration", `import Shortcuts\nhelper(x: 1)\nfunc helper(x) {\n  return x\n}`, /called before its func is declared/],
     ["assigning to an output", `import Shortcuts\nbatteryLevel() >> level\nlevel = 5`, /read-only/],
     ["assigning to a built-in", `import Shortcuts\nShortcutInput = "x"`, /built-in variable/],
@@ -172,14 +170,44 @@ describe("catches common mistakes", () => {
     ["semicolons", `import Shortcuts\nvibrate();`, /semicolons/],
     ["parentheses around an if condition", `import Shortcuts\nbatteryLevel() >> level\nif (level < 20) {\n  vibrate()\n}`, /Parentheses around an if condition/],
     ["menu prompt in parentheses", `import Shortcuts\nmenu("Pick") {\ncase "A":\n  vibrate()\n}`, /menu\("Prompt"\) \{` is rejected/],
-    ["docs spelling that differs from Shortcuts", `import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: Item at Index, index: "1")`, /Shortcuts spells it `Item At Index`/],
-    ["a { } value before other arguments", `import Shortcuts\ndownloadURL(url: "https://example.com", headers: {\\"a\\": \\"b\\"}, method: GET) >> r`, /Put `headers:` last/],
+    ["enum written as the compiler's identifier", `import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: ItemAtIndex, index: "1")`, /open-source compiler's name[\s\S]*type: Item At Index/],
+    ["variables inside JSON", `import Shortcuts\nvar n = "x"\ndictionary(json: {"name": "\${n}"})`, /can't contain variables[\s\S]*setValue/],
+    ["a { } value before other arguments", `import Shortcuts\ndownloadURL(url: "https://example.com", headers: {\\"a\\": \\"b\\"}, method: GET) >> r`, /Put `headers:` after the other arguments/],
+    ["requestJSON, whose form isn't confirmed", `import Shortcuts\ndownloadURL(url: "https://example.com", method: POST, requestType: Json, requestJSON: {"a": "b"}) >> r`, /isn't confirmed yet[\s\S]*requestType: File/],
+    ["a quoted text variable as JSON", `import Shortcuts\nvar j = "x"\ndictionary(json: "\${j}") >> d`, /isn't confirmed to work/],
   ];
   for (const [name, code, pattern] of warningCases) {
     it(`warns: ${name}`, () => {
       expect(messages(warnings(code))).toMatch(pattern);
     });
   }
+
+  it("treats inferred rules as warnings, not errors", () => {
+    for (const code of [
+      `import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: ItemAtIndex, index: "1")`,
+      `import Shortcuts\nvar n = "x"\ndictionary(json: {"name": "\${n}"})`,
+      `import Shortcuts\ndownloadURL(url: "https://example.com", method: POST, requestType: Json, requestJSON: {"a": "b"}) >> r`,
+    ]) {
+      expect(messages(errors(code)), code).toBe("");
+    }
+  });
+
+  it("notes docs spellings whose letter case isn't confirmed", () => {
+    const result = validateJelly(`import Shortcuts\nlist(items: ["a"]) >> l\ngetItemFromList(list: l, type: Item at Index, index: "1")`);
+    expect(result.ok).toBe(true);
+    expect(messages(result.diagnostics.filter((d) => d.severity === "info"))).toMatch(/Shortcuts spells it `Item At Index`/);
+  });
+
+  it("accepts symbol-named and punctuated enum values", () => {
+    for (const code of [
+      `import Shortcuts\nmath(input: "2", operation: addition, operand: "3") >> r`,
+      `import Shortcuts\nmath(input: "2", operation: multiplication, operand: "3", scientific: x^y) >> r`,
+      `import Shortcuts\nformatDate(date: "\${CurrentDate}", dStyle: ISO 8601) >> d`,
+      `import Shortcuts\nspeakText(text: "hi", language: en-US)`,
+    ]) {
+      expect(messages(errors(code)), code).toBe("");
+    }
+  });
 
   it("reports line and column numbers", () => {
     const [d] = errors(`import Shortcuts\n\n  showNotification(body: "x")`);

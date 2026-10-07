@@ -22,6 +22,8 @@ export interface Action {
   params: Param[];
   syntax: string;
   example: string;
+  /** The example was rewritten (spellings, JSON form) from the docs' version. */
+  exampleAdapted?: boolean;
   doc: string;
   minIOS?: number;
   premium?: boolean;
@@ -112,13 +114,12 @@ export function enumSpellings(param: Param): string[] {
 }
 
 /**
- * The confirmed way to write a Dictionary parameter. Parameters the app hasn't been tested on
- * default to the escaped form (what downloadURL's headers needs; the docs examples start the
- * same way), with `confirmed: false`.
+ * The confirmed way to write a Dictionary parameter, from data/app-confirmed.json. Parameters the
+ * app hasn't been tested on come back with no accepted or rejected forms and `confirmed: false`.
  */
 export function dictionaryRule(action: Action, param: Param): DictRule & { confirmed: boolean } {
   const rule = appConfirmed.dictionaryParams[`${action.library}:${action.name}:${param.name}`];
-  return rule ? { ...rule, confirmed: true } : { accepted: ["escaped"], rejected: ["quoted"], confirmed: false };
+  return rule ? { ...rule, confirmed: true } : { accepted: [], rejected: [], confirmed: false };
 }
 
 /** Rewrites a JSON object into the given form: plain {"a": "b"} or escaped {\"a\": \"b\"}. */
@@ -424,18 +425,22 @@ export function formatActionDetail(a: Action): string {
       }
       if (p.type === "Dictionary") {
         const rule = dictionaryRule(a, p);
-        const form = rule.accepted[0];
-        const sample = writeDict(rule.example ?? '{"key": "value"}', form);
-        row += ` — write it as \`${p.name}: ${sample}\` (${form === "plain" ? "plain JSON in braces" : "JSON in braces with every quote escaped as \\\""}, no surrounding quotes, no variables inside)`;
-        row += rule.confirmed ? "; confirmed in the Jellycuts app" : "; this form isn't confirmed in the app yet";
-        if (a.params.indexOf(p) < a.params.length - 1 || a.params.filter((q) => q.type === "Dictionary").length > 1) row += ". Put it last in the call";
+        if (rule.confirmed) {
+          const form = rule.accepted[0];
+          const sample = writeDict(rule.example ?? '{"key": "value"}', form);
+          row += ` — write it as \`${p.name}: ${sample}\` (${form === "plain" ? "plain JSON in braces" : "JSON in braces with every quote escaped as \\\""}, no surrounding quotes, no variables inside); confirmed in the Jellycuts app`;
+        } else {
+          row += " — how the Jellycuts app wants this written isn't confirmed yet";
+          if (a.name === "downloadURL") row += "; for a JSON body use `requestType: File, requestVar: <dictionary>` instead (jelly_guide › recipes)";
+        }
+        if (a.params.some((q) => q.type !== "Dictionary")) row += ". Put `{ … }` values after the other arguments";
       }
       lines.push(row);
     }
   } else {
     lines.push("Parameters: none — call it as `" + a.name + "()`");
   }
-  if (a.example) lines.push("Example (from the docs):", "```jelly", a.example, "```");
+  if (a.example) lines.push(a.exampleAdapted ? "Example (adapted from the docs to what the Jellycuts app accepts):" : "Example (from the docs):", "```jelly", a.example, "```");
   lines.push(`Docs: ${a.doc}`);
   return lines.join("\n");
 }
